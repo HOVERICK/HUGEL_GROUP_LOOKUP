@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>휴젤 워크숍 · 조 검색</title>
+<style>
+:root { --maxw: 820px; }
+* { box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont,"Segoe UI",Roboto,"Noto Sans KR",Arial,"Apple SD Gothic Neo","맑은 고딕",sans-serif; margin:0; background:#f7f7fb; color:#111; }
+.header { max-width: var(--maxw); margin:24px auto 0; padding:0 16px; }
+.h1 { font-size:20px; font-weight:700; margin:8px 0 4px; }
+.sub { color:#666; font-size:14px; margin-bottom:12px; }
+.card { max-width:var(--maxw); background:#fff; margin:12px auto; border-radius:16px; padding:16px; box-shadow:0 6px 18px rgba(0,0,0,.06); }
+.input-wrap { display:flex; gap:8px; align-items:center; }
+input[type="text"] { flex:1; padding:12px 14px; border:1px solid #ddd; border-radius:12px; font-size:16px; }
+button { padding:12px 14px; border:none; border-radius:12px; background:#111; color:#fff; font-weight:700; cursor:pointer; }
+.helper { font-size:12px; color:#888; margin-top:6px; }
+.table-wrap { overflow:auto; border:1px solid #eee; border-radius:12px; }
+table { width:100%; border-collapse:collapse; min-width:560px; }
+th, td { padding:10px 12px; border-bottom:1px solid #f0f0f0; text-align:left; font-size:14px; }
+th { background:#fafafa; position:sticky; top:0; z-index:1; }
+tr:hover td { background:#fcfcff; }
+.count { font-size:12px; color:#666; margin:10px 0 0; }
+.footer { max-width:var(--maxw); margin:8px auto 24px; padding:0 16px; color:#888; font-size:12px; }
+.badge { display:inline-block; font-size:11px; padding:3px 8px; border-radius:999px; background:#eef; color:#225; margin-left:6px; }
+</style>
+</head>
+<body>
+  <div class="header">
+    <div class="h1">휴젤 워크숍 · 조 검색 <span class="badge">Yamoiza</span></div>
+    <div class="sub">이름을 입력하면 이름 / 부서 / 소속 / 오전조(알파벳+숫자) / 오후조(알파벳)를 확인할 수 있습니다.</div>
+  </div>
+
+  <div class="card">
+    <div class="input-wrap">
+      <input id="q" type="text" placeholder="이름 입력 (예: 홍길동)" />
+      <button id="btn" onclick="run()">검색</button>
+    </div>
+    <div class="helper">※ 정확한 한글 이름 일부만 입력해도 검색됩니다. 동명이인은 모두 표시됩니다.</div>
+  </div>
+
+  <div class="card">
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>이름</th><th>부서</th><th>소속</th><th>오전조</th><th>오후조</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+    <div class="count" id="count"></div>
+  </div>
+
+  <div class="footer">© <span id="today"></span> Yamoiza · GitHub Pages ready</div>
+
+<script>
+const CSV_URL = "./data/group_records.csv";
+const COLUMNS = ["이름","부서","소속","오전조","오후조"];
+
+const rowsEl = document.getElementById('rows');
+const countEl = document.getElementById('count');
+const qEl = document.getElementById('q');
+document.getElementById('today').textContent = new Date().toISOString().slice(0,10);
+
+function norm(s){ return (s||"").toString().trim().replace(/\s+/g,"").toLowerCase(); }
+
+// 간단 CSV 파서(따옴표/콤마 기본 처리, CR/LF, BOM 제거)
+function parseCSV(text){
+  // BOM 제거
+  if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+  const lines = text.replace(/\r\n/g,"\n").replace(/\r/g,"\n").split("\n").filter(Boolean);
+  if(!lines.length) return [];
+  const out = [];
+  const header = splitCSVLine(lines[0]);
+  for(let i=1;i<lines.length;i++){
+    const cells = splitCSVLine(lines[i]);
+    const row = {};
+    for(let c=0;c<header.length;c++){
+      row[header[c]] = cells[c] || "";
+    }
+    out.push(row);
+  }
+  return out;
+}
+
+function splitCSVLine(line){
+  const res=[]; let cur=""; let inQ=false;
+  for(let i=0;i<line.length;i++){
+    const ch=line[i];
+    if(inQ){
+      if(ch===`"`){
+        if(line[i+1]==='"'){ cur+='"'; i++; }
+        else { inQ=false; }
+      }else{ cur+=ch; }
+    }else{
+      if(ch===`,`) { res.push(cur); cur=""; }
+      else if(ch===`"`) { inQ=true; }
+      else { cur+=ch; }
+    }
+  }
+  res.push(cur);
+  return res;
+}
+
+let DATA = [];
+async function load(){
+  const resp = await fetch(CSV_URL, {cache:"no-store"});
+  const text = await resp.text();
+  const rows = parseCSV(text);
+  // 필요한 컬럼만 추출 및 순서 정렬
+  DATA = rows.map(r => {
+    const obj = {};
+    for(const c of COLUMNS) obj[c] = r[c] ?? "";
+    return obj;
+  });
+}
+
+function render(list){
+  rowsEl.innerHTML = "";
+  for(const r of list){
+    const tr = document.createElement("tr");
+    for(const c of COLUMNS){
+      const td = document.createElement("td");
+      td.textContent = r[c] ?? "";
+      tr.appendChild(td);
+    }
+    rowsEl.appendChild(tr);
+  }
+  countEl.textContent = list.length ? `${list.length}건 검색됨` : "검색 결과 없음";
+}
+
+function run(){
+  const q = norm(qEl.value);
+  const out = q ? DATA.filter(r => norm(r["이름"]).includes(q)) : [];
+  render(out);
+}
+
+qEl.addEventListener("keydown", e => { if(e.key==="Enter") run(); });
+
+load().then(()=>render([])).catch(err=>{
+  countEl.textContent = "데이터 로드 실패: " + String(err);
+});
+</script>
+</body>
+</html>
