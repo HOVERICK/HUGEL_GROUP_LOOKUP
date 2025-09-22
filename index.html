@@ -15,7 +15,6 @@ body { font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Noto San
 .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
 input[type="text"] { flex:1; min-width:240px; padding:12px 14px; border:1px solid #ddd; border-radius:12px; font-size:16px; }
 button { padding:12px 14px; border:none; border-radius:12px; background:#111; color:#fff; font-weight:700; cursor:pointer; }
-.helper { font-size:12px; color:#888; margin-top:6px; }
 .table-wrap { overflow:auto; border:1px solid #eee; border-radius:12px; }
 table { width:100%; border-collapse:collapse; min-width:680px; }
 th, td { padding:10px 12px; border-bottom:1px solid #f0f0f0; text-align:left; font-size:14px; }
@@ -38,7 +37,6 @@ tr:hover td { background:#fcfcff; }
       <input id="q" type="text" placeholder="이름 입력 (예: 홍길동)" />
       <button id="btn" onclick="run()">검색</button>
     </div>
-    <div class="helper">※ 엑셀은 /data/group_records.xlsx 를 읽습니다. 마커 행: 예) <b>M2</b>, <b>M3</b> … (한 셀만 채워진 줄)</div>
     <div id="err" class="err"></div>
   </div>
 
@@ -61,8 +59,9 @@ tr:hover td { background:#fcfcff; }
 <script>
 document.getElementById('today').textContent = new Date().toISOString().slice(0,10);
 
-// 엑셀 경로 (같은 레포 내)
-const XLSX_URL = "./data/group_records.xlsx?v=" + Date.now(); // 캐시 무력화
+// ✅ 엑셀 경로: 레포 안의 위치/파일명이 다르면 아래만 바꿔주세요.
+const XLSX_URL = "./data/group_records.xlsx?v=" + Date.now();
+
 const rowsEl = document.getElementById('rows');
 const countEl = document.getElementById('count');
 const qEl = document.getElementById('q');
@@ -71,138 +70,82 @@ const COLUMNS = ["이름","부서","소속","오전조","오후조"];
 
 function norm(s){ return (s||"").toString().trim().replace(/\s+/g,"").toLowerCase(); }
 
-// ====== 마커/행 인식 유틸 ======
+// =========== 마커/행 인식을 더 견고하게 ===========
 function isDigits(s){ return /^[0-9]+$/.test(s); }
-function isMarkerCell(s){
-  // 빈칸 제거 후 알파벳/한글 + 숫자 조합 (예: M2, A10, 엠2)
-  const t = String(s || "").replace(/\s+/g,"");
-  return /^[A-Za-z가-힣]+[0-9]+$/.test(t);
+function cleanToken(s){ return String(s||"").replace(/\s+/g,"").trim(); }
+
+// 마커 셀 판정(M2, A10, 한글+숫자도 허용). 공백 섞여있어도 OK.
+function isMarkerToken(tok){ return /^[A-Za-z가-힣]+[0-9]+$/.test(cleanToken(tok)); }
+
+// "마커 행" 판정: (1) 전체 셀 중 마커 토큰이 1개이고, (2) 나머지 셀은 전부 비었거나 매우 사소한 값
+function getMarkerFromRow(cells){
+  const trimmed = (cells||[]).map(x => cleanToken(x));
+  const candidates = trimmed.filter(x => x && isMarkerToken(x));
+  const nonEmpty = trimmed.filter(x => x).length;
+  if (candidates.length === 1 && nonEmpty <= 2) return candidates[0]; // ex) [ "", "M2", "" ] or "M 2"
+  return "";
 }
-function onlyOneNonEmpty(arr){
-  let cnt=0, lastIdx=-1;
-  for(let i=0;i<arr.length;i++){ if(String(arr[i]).trim()!==""){ cnt++; lastIdx=i; } }
-  return {ok: cnt===1, idx: lastIdx};
-}
-function looksLikeMemberRow(arr){
-  const filled = arr.filter(v => String(v).trim()!=="").length;
-  const firstIsNum = isDigits(String(arr[0]).trim());
+
+// 구성원 행 판정: 보통 (번호/소속/이름/부서)로 3칸 이상 채워짐, 또는 첫 칸이 숫자면서 2칸 이상
+function looksLikeMemberRow(cells){
+  const trimmed = (cells||[]).map(x => String(x).trim());
+  const filled = trimmed.filter(v => v!=="").length;
+  const firstIsNum = isDigits(trimmed[0]);
   return (filled >= 3) || (firstIsNum && filled >= 2);
 }
-function pickName(arr){
-  for(const idx of [2,1,3,0,4]){
-    const v = String(arr[idx] ?? "").trim();
+
+function pickName(cells){
+  // 이름은 보통 2~4번째 셀; 팀/본부/센터 같은 부서 키워드는 제외
+  for (const idx of [2,1,3,0,4]){
+    const v = String(cells[idx] ?? "").trim();
     if(/[가-힣]{2,4}/.test(v) && !/팀|본부|센터|\)/.test(v)) return v;
   }
-  for(let i=0;i<arr.length;i++){
-    const v = String(arr[i] ?? "").trim();
+  for (let i=0;i<cells.length;i++){
+    const v = String(cells[i] ?? "").trim();
     if(/[가-힣]{2,4}/.test(v)) return v;
   }
   return "";
 }
-function pickDept(arr){
-  for(const idx of [3,2,4,1,0]){
-    const v = String(arr[idx] ?? "").trim();
+function pickDept(cells){
+  for (const idx of [3,2,4,1,0]){
+    const v = String(cells[idx] ?? "").trim();
     if(/팀|본부|센터|\)/.test(v)) return v;
   }
   return "";
 }
-function pickOrg(arr){
-  for(const idx of [1,2,3,0,4]){
-    const v = String(arr[idx] ?? "").trim();
+function pickOrg(cells){
+  for (const idx of [1,2,3,0,4]){
+    const v = String(cells[idx] ?? "").trim();
     if(v) return v;
   }
   return "";
 }
 function afternoonFromMarker(marker){
-  // 'M2' -> 'M' (숫자/공백 제거)
-  return String(marker || "").replace(/\s+/g,"").replace(/[0-9]/g,"");
+  return cleanToken(marker).replace(/[0-9]/g,""); // 'M2' → 'M'
 }
 
-// ====== 엑셀 로드 & 파싱 ======
-function headerRowIndex(rows){
-  const nameKeys = /(예약자명|이름|성함)/;
-  for(let i=0;i<Math.min(rows.length,50);i++){
-    const line = (rows[i]||[]).map(v=>String(v));
-    if(line.some(c => nameKeys.test(c))) return i;
-    // 조 테이블에는 정식 헤더가 없을 수 있어 0 반환도 허용
-  }
-  return 0;
-}
-
+// =========== 엑셀 로드 & 파싱 ===========
 async function loadXLSX(){
   const resp = await fetch(XLSX_URL, {cache:"no-store"});
   if(!resp.ok) throw new Error("엑셀 불러오기 실패: " + resp.status + " " + resp.statusText);
   const buf  = await resp.arrayBuffer();
   const wb   = XLSX.read(buf, {type:'array'});
 
-  const out = [];
+  const members = [];
   for(const sheetName of wb.SheetNames){
-    const ws    = wb.Sheets[sheetName];
-    const rows  = XLSX.utils.sheet_to_json(ws, {header:1, defval:""});
+    const ws   = wb.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json(ws, {header:1, defval:""});
     if(!rows.length) continue;
 
-    let currentMarker = "";
-    const startRow = 0; // 조 표는 헤더가 없을 수 있으니 0부터 스캔
-    for(let r=startRow; r<rows.length; r++){
-      const raw = rows[r] || [];
-      const trimmed = raw.map(v => String(v).trim());
+    let marker = "";
+    for(let r=0; r<rows.length; r++){
+      const row = rows[r] || [];
 
-      // 1) 마커 행: 한 셀만 채워져 있고 값이 'M2' 등
-      const {ok, idx} = onlyOneNonEmpty(trimmed);
-      if(ok && isMarkerCell(trimmed[idx])){
-        currentMarker = trimmed[idx].replace(/\s+/g,""); // 공백 제거형으로 보관
+      // 1) 마커 감지 (여러 셀 중 하나라도 'M2'형이면 마커로 채택)
+      const found = getMarkerFromRow(row);
+      if(found){
+        marker = found; // ex) 'M2'
         continue;
       }
 
       // 2) 구성원 행
-      if(!currentMarker) continue;
-      if(!looksLikeMemberRow(trimmed)) continue;
-
-      const name = pickName(trimmed);
-      if(!name) continue;
-
-      const dept = pickDept(trimmed);
-      const org  = pickOrg(trimmed);
-
-      out.push({
-        "이름": name,
-        "부서": dept,
-        "소속": org,
-        "오전조": currentMarker,                 // 알파벳+숫자 (예: M2)
-        "오후조": afternoonFromMarker(currentMarker) // 알파벳만 (예: M)
-      });
-    }
-  }
-  return out;
-}
-
-// ====== UI ======
-function render(list){
-  rowsEl.innerHTML = "";
-  for(const r of list){
-    const tr = document.createElement("tr");
-    for(const c of COLUMNS){
-      const td = document.createElement("td");
-      td.textContent = r[c] ?? "";
-      tr.appendChild(td);
-    }
-    rowsEl.appendChild(tr);
-  }
-  countEl.textContent = list.length ? `${list.length}건 검색됨` : "검색 결과 없음";
-}
-
-let DATA = [];
-function run(){
-  const q = norm(qEl.value);
-  const out = q ? DATA.filter(r => norm(r["이름"]).includes(q)) : [];
-  render(out);
-}
-qEl.addEventListener("keydown", e => { if(e.key==="Enter") run(); });
-
-// 초기 로드
-loadXLSX()
-  .then(rows => { DATA = rows; errEl.textContent=""; render([]); })
-  .catch(err => { errEl.textContent = "데이터 로드 실패: " + String(err); });
-</script>
-</body>
-</html>
